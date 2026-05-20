@@ -4,13 +4,48 @@ const Appointment = require('../models/Appointment')
 const Report      = require('../models/Report')
 const Prescription= require('../models/Prescription')
 const AuditLog    = require('../models/AuditLog')
+const { createNotification } = require('../utils/notificationHelper')
 const bcrypt      = require('bcryptjs')
+const fs          = require('fs')
 const os          = require('os')
 const process     = require('process')
+
+function startOfLocalDay(date = new Date()) {
+  const d = new Date(date)
+  d.setHours(0, 0, 0, 0)
+  return d
+}
+
+function addDays(date, days) {
+  const d = new Date(date)
+  d.setDate(d.getDate() + days)
+  return d
+}
+
+function percentChange(current, previous) {
+  if (!previous && !current) return 0
+  if (!previous) return 100
+  return Math.round(((current - previous) / previous) * 100)
+}
+
+function getDiskSpaceLabel() {
+  if (typeof fs.statfsSync !== 'function') return 'Unavailable'
+  try {
+    const stats = fs.statfsSync(process.cwd())
+    const available = stats.bavail * stats.bsize
+    const total = stats.blocks * stats.bsize
+    if (!total) return 'Unavailable'
+    return `${((available / total) * 100).toFixed(1)}% free`
+  } catch {
+    return 'Unavailable'
+  }
+}
 
 // ─── STATS ─────────────────────────────────────────────────
 const getStats = async (req, res) => {
   const todayStart = new Date(new Date().setHours(0, 0, 0, 0))
+  const last7Start = addDays(todayStart, -6)
+  const prev7Start = addDays(last7Start, -7)
 
   const [
     totalUsers,
@@ -21,6 +56,10 @@ const getStats = async (req, res) => {
     totalAppointments,
     pendingDoctors,
     activeToday,
+    newUsersLast7,
+    newUsersPrev7,
+    activeLast7,
+    activePrev7,
   ] = await Promise.all([
     User.countDocuments(),
     User.countDocuments({ role: 'patient' }),
@@ -30,6 +69,10 @@ const getStats = async (req, res) => {
     Appointment.countDocuments(),
     User.countDocuments({ role: 'doctor', isApproved: false }),
     User.countDocuments({ lastLogin: { $gte: todayStart } }),
+    User.countDocuments({ createdAt: { $gte: last7Start } }),
+    User.countDocuments({ createdAt: { $gte: prev7Start, $lt: last7Start } }),
+    User.countDocuments({ lastLogin: { $gte: last7Start } }),
+    User.countDocuments({ lastLogin: { $gte: prev7Start, $lt: last7Start } }),
   ])
 
   res.json({
@@ -44,8 +87,8 @@ const getStats = async (req, res) => {
       totalAppointments,
       pendingDoctors,
       activeToday,
-      userTrend:   12,
-      activeTrend: 5,
+      userTrend:   percentChange(newUsersLast7, newUsersPrev7),
+      activeTrend: percentChange(activeLast7, activePrev7),
     },
   })
 }
@@ -206,6 +249,17 @@ const approveDoctor = async (req, res) => {
     resource: 'User', resourceId: doctor._id, ip: req.ip,
   })
 
+  // Create notification for doctor
+  await createNotification({
+    recipientId: doctor._id,
+    senderId: req.user._id,
+    type: approve ? 'doctor_approved' : 'doctor_rejected',
+    title: approve ? 'Account Approved' : 'Account Rejected',
+    message: approve
+      ? 'Your doctor account has been approved by the admin. You can now access all features.'
+      : 'Your doctor account has been rejected by the admin.',
+  })
+
   res.json({
     success: true,
     message: `Doctor ${approve ? 'approved' : 'rejected'} successfully`,
@@ -260,7 +314,7 @@ const getSystemHealth = async (req, res) => {
   const mongoose   = require('mongoose')
   const dbState    = ['disconnected', 'connected', 'connecting', 'disconnecting']
 
-  const lastBackup = new Date(Date.now() - 6 * 60 * 60 * 1000)
+  const lastBackup = process.env.LAST_BACKUP_AT || process.env.BACKUP_LAST_AT || null
 
   res.json({
     success: true,
@@ -270,8 +324,9 @@ const getSystemHealth = async (req, res) => {
       dbStatus:    dbState[mongoose.connection.readyState] || 'unknown',
       uptime:      `${hours}h ${mins}m`,
       memoryUsage: `${usedMemPct}%`,
-      diskSpace:   'Available',
-      lastBackup:  lastBackup.toISOString(),
+      diskSpace:   getDiskSpaceLabel(),
+      lastBackup,
+      checkedAt:   new Date().toISOString(),
       nodeVersion: process.version,
       platform:    os.platform(),
       cpus:        os.cpus().length,

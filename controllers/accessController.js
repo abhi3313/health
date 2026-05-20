@@ -3,6 +3,7 @@ const User          = require('../models/User')
 const HealthRecord  = require('../models/HealthRecord')
 const Report        = require('../models/Report')
 const Prescription  = require('../models/Prescription')
+const { createNotification } = require('../utils/notificationHelper')
 
 // ══════════════════════════════════════════════════════════════
 // DOCTOR SIDE
@@ -64,6 +65,17 @@ const requestAccess = async (req, res) => {
     { path: 'doctor',  select: 'name email specialization hospital' },
     { path: 'patient', select: 'name email patientUniqueId' },
   ])
+
+  // Create notification for patient
+  await createNotification({
+    recipientId: patient._id,
+    senderId: doctorId,
+    type: 'access_request',
+    title: `Access Request from Dr. ${req.user.name}`,
+    message: `Dr. ${req.user.name} has requested access to your health records.`,
+    relatedId: accessRequest._id,
+    relatedModel: 'AccessRequest',
+  })
 
   res.status(201).json({
     success: true,
@@ -174,6 +186,17 @@ const approveRequest = async (req, res) => {
   await request.save()
   await request.populate('doctor', 'name email specialization')
 
+  // Create notification for doctor
+  await createNotification({
+    recipientId: request.doctor._id,
+    senderId: req.user._id,
+    type: 'access_approved',
+    title: `Access Approved by ${req.user.name}`,
+    message: `${req.user.name} has approved your access to their health records.`,
+    relatedId: request._id,
+    relatedModel: 'AccessRequest',
+  })
+
   res.json({
     success: true,
     message: `Access granted to Dr. ${request.doctor.name}.`,
@@ -198,6 +221,17 @@ const rejectRequest = async (req, res) => {
   request.responseMessage = req.body.message || ''
   await request.save()
   await request.populate('doctor', 'name email specialization')
+
+  // Create notification for doctor
+  await createNotification({
+    recipientId: request.doctor._id,
+    senderId: req.user._id,
+    type: 'access_rejected',
+    title: `Access Rejected by ${req.user.name}`,
+    message: `${req.user.name} has rejected your access request.`,
+    relatedId: request._id,
+    relatedModel: 'AccessRequest',
+  })
 
   res.json({
     success: true,

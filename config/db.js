@@ -2,8 +2,9 @@ const mongoose = require('mongoose')
 
 const connectDB = async () => {
   try {
-    
-    const conn = await mongoose.connect("mongodb://localhost:27017/HealthGand", {
+    const mongoUri = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/healthguardian'
+
+    const conn = await mongoose.connect(mongoUri, {
       serverSelectionTimeoutMS: 5000,
     })
 

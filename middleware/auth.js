@@ -1,5 +1,5 @@
-const jwt  = require('jsonwebtoken')
 const User = require('../models/User')
+const { verifyAuthToken } = require('../utils/jwt')
 
 // ── Protect: verify JWT ────────────────────────────────────
 const protect = async (req, res, next) => {
@@ -17,7 +17,7 @@ const protect = async (req, res, next) => {
   }
 
   try {
-    const decoded = jwt.verify(token,'healthguardian_super_secret_jwt_key_change_in_production') 
+    const decoded = verifyAuthToken(token)
 
     const user = await User.findById(decoded.id).select('-password')
     if (!user) {

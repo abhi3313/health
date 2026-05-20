@@ -10,6 +10,27 @@ function escapeRegex(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
+function startOfLocalDay(date = new Date()) {
+  const d = new Date(date)
+  d.setHours(0, 0, 0, 0)
+  return d
+}
+
+function addDays(date, days) {
+  const d = new Date(date)
+  d.setDate(d.getDate() + days)
+  return d
+}
+
+function chartDateLabel(date) {
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+function dayKey(date) {
+  const d = startOfLocalDay(date)
+  return d.toISOString().slice(0, 10)
+}
+
 // ─── DASHBOARD ─────────────────────────────────────────────
 const getDashboard = async (req, res) => {
   const patientId = req.user._id
@@ -109,6 +130,10 @@ const getRecord = async (req, res) => {
 }
 
 const addRecord = async (req, res) => {
+  // Validate date is not in the future
+  if (req.body.date && new Date(req.body.date) > new Date()) {
+    return res.status(400).json({ success: false, message: 'Record date cannot be in the future.' })
+  }
   const record = await HealthRecord.create({ ...req.body, patient: req.user._id })
   res.status(201).json({ success: true, message: 'Health record added successfully', data: { record } })
 }
@@ -121,6 +146,10 @@ const updateRecord = async (req, res) => {
       success: false,
       message: 'Clinical records added by your doctor cannot be edited.',
     })
+  }
+  // Validate date is not in the future
+  if (req.body.date && new Date(req.body.date) > new Date()) {
+    return res.status(400).json({ success: false, message: 'Record date cannot be in the future.' })
   }
   const forbidden = ['patient', 'doctor']
   forbidden.forEach(f => delete req.body[f])
@@ -249,21 +278,46 @@ const cancelAppointment = async (req, res) => {
 const getVitals = async (req, res) => {
   const { range = '7d' } = req.query
   const days  = range === '30d' ? 30 : range === '90d' ? 90 : 7
-  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
+  const todayStart = startOfLocalDay()
+  const since = addDays(todayStart, -(days - 1))
+  const tomorrowStart = addDays(todayStart, 1)
 
-  const vitals = await Vital.find({ patient: req.user._id, recordedAt: { $gte: since } })
+  const vitals = await Vital.find({
+    patient: req.user._id,
+    recordedAt: { $gte: since, $lt: tomorrowStart },
+  })
     .sort({ recordedAt: 1 })
 
-  // Build chart data for frontend
-  const chart = vitals.map(v => ({
-    date:      v.recordedAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-    heartRate: v.heartRate?.value,
-    oxygen:    v.oxygenSaturation?.value,
-    glucose:   v.glucose?.value,
-    systolic:  v.bloodPressure?.systolic,
-  }))
+  const latestByDay = new Map()
+  vitals.forEach((v) => {
+    latestByDay.set(dayKey(v.recordedAt), v)
+  })
 
-  res.json({ success: true, message: 'Vitals fetched', data: { vitals, chart } })
+  const chart = []
+  for (let i = 0; i < days; i += 1) {
+    const date = addDays(since, i)
+    const vital = latestByDay.get(dayKey(date))
+    if (vital || days <= 7) {
+      chart.push({
+        date:      chartDateLabel(date),
+        heartRate: vital?.heartRate?.value ?? null,
+        oxygen:    vital?.oxygenSaturation?.value ?? null,
+        glucose:   vital?.glucose?.value ?? null,
+        systolic:  vital?.bloodPressure?.systolic ?? null,
+      })
+    }
+  }
+
+  const hasHeartRateValue = chart.some((row) => row.heartRate != null)
+
+  res.json({
+    success: true,
+    message: 'Vitals fetched',
+    data: {
+      vitals,
+      chart: hasHeartRateValue ? chart : [],
+    },
+  })
 }
 
 const addVital = async (req, res) => {

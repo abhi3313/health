@@ -33,6 +33,24 @@ function escapeRegex(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
+function startOfLocalDay(date = new Date()) {
+  const d = new Date(date)
+  d.setHours(0, 0, 0, 0)
+  return d
+}
+
+function addDays(date, days) {
+  const d = new Date(date)
+  d.setDate(d.getDate() + days)
+  return d
+}
+
+function startOfWeek(date = new Date()) {
+  const d = startOfLocalDay(date)
+  d.setDate(d.getDate() - d.getDay())
+  return d
+}
+
 /** Patients linked via appointments OR approved patient consent (AccessRequest). */
 async function getMergedDoctorPatientIds(doctorId) {
   const docRef = normalizeDoctorId(doctorId)
@@ -49,12 +67,10 @@ async function getMergedDoctorPatientIds(doctorId) {
 // ─── DASHBOARD ─────────────────────────────────────────────
 const getDashboard = async (req, res) => {
   const doctorId = req.user._id
-  const today    = new Date()
-  const todayStart = new Date(today.setHours(0, 0, 0, 0))
-  const todayEnd   = new Date(today.setHours(23, 59, 59, 999))
-
-  // last 7 days for weekly chart
-  const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+  const todayStart = startOfLocalDay()
+  const tomorrowStart = addDays(todayStart, 1)
+  const weekStart = startOfWeek()
+  const weekEnd = addDays(weekStart, 7)
 
   const patientIdSet = await getMergedDoctorPatientIds(doctorId)
   const totalPatients = patientIdSet.size
@@ -64,32 +80,39 @@ const getDashboard = async (req, res) => {
   const [
     todayAppts,
     totalAppts,
-    totalPrescriptions,
+    activePrescriptions,
     recordsAuthored,
     todayAppointments,
     weeklyAppointments,
   ] = await Promise.all([
-    Appointment.countDocuments({ doctor: doctorId, date: { $gte: todayStart, $lte: todayEnd } }),
-    Appointment.countDocuments({ doctor: doctorId }),
-    Prescription.countDocuments({ doctor: doctorId }),
+    Appointment.countDocuments({ doctor: docRef, date: { $gte: todayStart, $lt: tomorrowStart } }),
+    Appointment.countDocuments({ doctor: docRef }),
+    Prescription.countDocuments({ doctor: docRef, status: 'active' }),
     HealthRecord.countDocuments({ doctor: docRef }),
-    Appointment.find({ doctor: doctorId, date: { $gte: todayStart, $lte: todayEnd } })
+    Appointment.find({ doctor: docRef, date: { $gte: todayStart, $lt: tomorrowStart } })
       .sort({ time: 1 })
       .populate('patient', 'name email phone bloodGroup'),
-    Appointment.find({ doctor: doctorId, date: { $gte: weekAgo } }),
+    Appointment.find({ doctor: docRef, date: { $gte: weekStart, $lt: weekEnd } }),
   ])
 
   // Build weekly chart – group by day name
   const days    = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-  const dayMap  = Object.fromEntries(days.map(d => [d, 0]))
+  const dayMap  = Object.fromEntries(days.map((d, i) => {
+    const date = addDays(weekStart, i)
+    return [date.toISOString().slice(0, 10), {
+      day: d,
+      date: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+      appointments: 0,
+    }]
+  }))
   weeklyAppointments.forEach(a => {
-    const day = days[new Date(a.date).getDay()]
-    dayMap[day] = (dayMap[day] || 0) + 1
+    const key = startOfLocalDay(a.date).toISOString().slice(0, 10)
+    if (dayMap[key]) dayMap[key].appointments += 1
   })
-  const weeklyChart = days.map(day => ({ day, appointments: dayMap[day] }))
+  const weeklyChart = Object.values(dayMap)
 
   // Get recent patients (unique) with last visit
-  const recentAppointments = await Appointment.find({ doctor: doctorId })
+  const recentAppointments = await Appointment.find({ doctor: docRef })
     .sort({ date: -1 })
     .limit(20)
     .populate('patient', 'name email bloodGroup dateOfBirth status')
@@ -165,7 +188,7 @@ const getDashboard = async (req, res) => {
         totalPatients,
         todayAppts,
         recordsReviewed: recordsAuthored,
-        prescriptions:   totalPrescriptions,
+        prescriptions:   activePrescriptions,
       },
       todayAppointments: formattedToday,
       recentPatients,
@@ -267,6 +290,9 @@ const getPatient = async (req, res) => {
   const patient = await User.findOne({ _id: req.params.id, role: 'patient' }).select('-password')
   if (!patient) return res.status(404).json({ success: false, message: 'Patient not found.' })
 
+  const denied = await assertDoctorCanManagePatient(req.user._id, req.params.id)
+  if (denied) return res.status(denied.code).json({ success: false, message: denied.message })
+
   const [records, vitals, prescriptions, appointments] = await Promise.all([
     HealthRecord.find({ patient: patient._id }).sort({ createdAt: -1 }).limit(10),
     Vital.findOne({ patient: patient._id }).sort({ recordedAt: -1 }),
@@ -288,6 +314,9 @@ const getPatient = async (req, res) => {
 }
 
 const getPatientRecords = async (req, res) => {
+  const denied = await assertDoctorCanManagePatient(req.user._id, req.params.id)
+  if (denied) return res.status(denied.code).json({ success: false, message: denied.message })
+
   const { type, page = 1, limit = 20 } = req.query
   const filter = { patient: req.params.id }
   if (type) filter.type = type
@@ -392,6 +421,9 @@ const updateAppointment = async (req, res) => {
 
 // ─── PRESCRIPTIONS ─────────────────────────────────────────
 const getPatientPrescriptions = async (req, res) => {
+  const denied = await assertDoctorCanManagePatient(req.user._id, req.params.id)
+  if (denied) return res.status(denied.code).json({ success: false, message: denied.message })
+
   const prescriptions = await Prescription.find({ patient: req.params.id })
     .sort({ createdAt: -1 })
     .populate('patient', 'name email')
@@ -428,14 +460,15 @@ const addPrescription = async (req, res) => {
 // ─── STATS ─────────────────────────────────────────────────
 const getStats = async (req, res) => {
   const doctorId   = req.user._id
+  const docRef     = normalizeDoctorId(doctorId)
   const merged     = await getMergedDoctorPatientIds(doctorId)
 
   const [totalPatients, totalAppts, pending, completed, totalRx] = await Promise.all([
     Promise.resolve(merged.size),
-    Appointment.countDocuments({ doctor: doctorId }),
-    Appointment.countDocuments({ doctor: doctorId, status: 'pending' }),
-    Appointment.countDocuments({ doctor: doctorId, status: 'completed' }),
-    Prescription.countDocuments({ doctor: doctorId }),
+    Appointment.countDocuments({ doctor: docRef }),
+    Appointment.countDocuments({ doctor: docRef, status: 'pending' }),
+    Appointment.countDocuments({ doctor: docRef, status: 'completed' }),
+    Prescription.countDocuments({ doctor: docRef, status: 'active' }),
   ])
 
   res.json({

@@ -1,6 +1,6 @@
 const mongoose = require('mongoose')
 const bcrypt   = require('bcryptjs')
-const jwt      = require('jsonwebtoken')
+const { signAuthToken } = require('../utils/jwt')
 
 const userSchema = new mongoose.Schema(
   {
@@ -145,11 +145,7 @@ userSchema.methods.matchPassword = async function (enteredPassword) {
 }
 
 userSchema.methods.generateToken = function () {
-  return jwt.sign(
-    { id: this._id, role: this.role },
-     'healthguardian_super_secret_jwt_key_change_in_production',
-    { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
-  )
+  return signAuthToken({ id: this._id, role: this.role })
 }
 
 userSchema.methods.toSafeObject = function () {

@@ -46,6 +46,11 @@ const register = async (req, res) => {
     return res.status(409).json({ success: false, message: 'An account with this email already exists.' })
   }
 
+  // Validate dateOfBirth is not in the future
+  if (dateOfBirth && new Date(dateOfBirth) > new Date()) {
+    return res.status(400).json({ success: false, message: 'Date of birth cannot be in the future.' })
+  }
+
   const user = await User.create({
     name, email, password, role, phone,
     dateOfBirth, bloodGroup, gender,
@@ -136,6 +141,11 @@ const updateMe = async (req, res) => {
     user.set(key, body[key])
   }
 
+  // Validate dateOfBirth is not in the future
+  if (body.dateOfBirth && new Date(body.dateOfBirth) > new Date()) {
+    return res.status(400).json({ success: false, message: 'Date of birth cannot be in the future.' })
+  }
+
   await user.save({ validateBeforeSave: true })
   res.json({ success: true, message: 'Profile updated successfully', data: { user: user.toSafeObject() } })
 }
@@ -173,15 +183,19 @@ const googleAuth = async (req, res) => {
   if (!idToken) {
     return res.status(400).json({ success: false, message: 'Google credential is required.' })
   }
-  const clientId = process.env.GOOGLE_CLIENT_ID
-  if (!clientId) {
+  const configuredClientIds = [
+    process.env.GOOGLE_CLIENT_ID,
+    ...(process.env.GOOGLE_CLIENT_IDS || '').split(',').map((x) => x.trim()).filter(Boolean),
+  ].filter(Boolean)
+
+  if (!configuredClientIds.length) {
     return res.status(503).json({ success: false, message: 'Google sign-in is not configured on this server.' })
   }
 
-  const client = new OAuth2Client(clientId)
+  const client = new OAuth2Client()
   let payload
   try {
-    const ticket = await client.verifyIdToken({ idToken, audience: clientId })
+    const ticket = await client.verifyIdToken({ idToken, audience: configuredClientIds })
     payload = ticket.getPayload()
   } catch {
     return res.status(401).json({ success: false, message: 'Invalid or expired Google sign-in.' })
@@ -191,6 +205,9 @@ const googleAuth = async (req, res) => {
   const email = (payload.email || '').toLowerCase()
   if (!email) {
     return res.status(400).json({ success: false, message: 'Google did not provide an email for this account.' })
+  }
+  if (payload.email_verified !== true) {
+    return res.status(401).json({ success: false, message: 'Google account email is not verified.' })
   }
 
   let user = await User.findOne({ $or: [{ googleId: sub }, { email }] })

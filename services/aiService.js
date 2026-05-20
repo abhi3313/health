@@ -1,5 +1,9 @@
 'use strict'
 
+// Default: Gemini 3.5 Flash (Google AI). Override via GEMINI_MODEL if your project uses another ID.
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash'
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY
+
 // ─── Knowledge Base ─────────────────────────────────────────────────────────
 // Each entry: { patterns: [regex], response: string | fn }
 
@@ -598,8 +602,61 @@ function detectIntent(message) {
 const INTENT_RESPONSES = {
   gratitude:   "You're very welcome! 😊 Don't hesitate to ask if you have more health questions. Take care!",
   small_talk:  "I'm doing great and ready to help! 💪 What health topic can I assist you with today?",
-  capability:  "I can help you with:\n\n• Understanding vital signs (BP, heart rate, oxygen)\n• Explaining lab results\n• Diet and nutrition advice\n• Exercise and fitness guidance\n• Medication safety\n• Mental health tips\n• Emergency guidance\n• Vaccination schedules\n\nJust ask me anything health-related!",
+  capability:  "I can help you with:\n\n• Explaining prescriptions and medical terms\n• Medicine safety and general interaction cautions (not a substitute for your pharmacist)\n• Allergy awareness and what to watch for\n• First aid and when to seek urgent or emergency care\n• Health awareness, prevention, and lifestyle tips\n• Understanding vital signs, labs, and reports at a high level\n\nAsk me anything health-related in plain language. For emergencies, contact local emergency services right away.",
   farewell:    "Goodbye! 👋 Stay healthy and don't hesitate to return if you have health questions. Take care!",
+}
+
+const SYSTEM_INSTRUCTION = `You are HealthGuardian AI Mentor in the HealthGuardian app.
+Scope (use cases): explain prescriptions and medical terms in plain language; general medicine safety awareness;
+allergy and common drug-interaction cautions when the user mentions drugs (always advise confirming with a clinician/pharmacist);
+first aid-style guidance and when to seek urgent or emergency care; health awareness and wellness tips; answer general health questions.
+Rules: be clear, practical, and cautious. You are not a doctor—do not diagnose, do not prescribe or change doses, and do not tell users to stop prescribed medication.
+For any emergency, serious symptoms, or uncertainty, tell the user to contact local emergency services or a qualified professional immediately.
+Keep answers concise unless the user asks for detail.`
+
+function buildGeminiHistory(history = []) {
+  if (!Array.isArray(history)) return []
+  return history
+    .filter(item => item && typeof item.content === 'string' && item.content.trim())
+    .slice(-12)
+    .map(item => ({
+      role: item.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: item.content }],
+    }))
+}
+
+async function queryGemini(message, history = []) {
+  if (!GEMINI_API_KEY || typeof fetch !== 'function') return null
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`
+  const geminiHistory = buildGeminiHistory(history)
+
+  const response = await fetch(url, {
+    method: 'POST',
+    cache: 'no-store',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
+      contents: [...geminiHistory, { role: 'user', parts: [{ text: message }] }],
+      generationConfig: {
+        temperature: 0.5,
+        maxOutputTokens: 700,
+      },
+    }),
+  })
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => '')
+    throw new Error(`Gemini API error ${response.status}: ${errorText}`)
+  }
+
+  const data = await response.json()
+  const reply = data?.candidates?.[0]?.content?.parts
+    ?.map(part => part?.text || '')
+    .join('')
+    .trim()
+
+  return reply || null
 }
 
 // ─── Exported AI service ────────────────────────────────────
@@ -619,6 +676,19 @@ const processQuery = async (message, history = []) => {
     return {
       reply:   INTENT_RESPONSES[intent],
       matched: intent,
+    }
+  }
+
+  // Prefer Gemini when API key is configured
+  try {
+    const geminiReply = await queryGemini(trimmed, history)
+    if (geminiReply) {
+      return { reply: geminiReply, matched: 'gemini' }
+    }
+  } catch (error) {
+    // Fall back to local KB to keep feature available even if provider fails
+    if (process.env.NODE_ENV === 'development') {
+      console.warn('Gemini query failed, using fallback:', error.message)
     }
   }
 

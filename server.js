@@ -19,9 +19,13 @@ const doctorRoutes      = require('./routes/doctorRoutes')
 const adminRoutes       = require('./routes/adminRoutes')
 const aiRoutes          = require('./routes/aiRoutes')
 const accessRoutes      = require('./routes/accessRoutes')
+const notificationRoutes = require('./routes/notificationRoutes')
 
 const app  = express()
 const PORT = process.env.PORT || 5000
+
+// Avoid 304 Not Modified on API JSON GETs (empty body breaks some clients / confuses devtools)
+app.set('etag', false)
 
 // ── Connect Database ─────────────────────────────────────
 connectDB()
@@ -43,6 +47,13 @@ const corsOptions = {
 app.use(cors(corsOptions))
 app.options('*', cors(corsOptions))
 
+// Never cache API responses in browsers or intermediaries (prevents conditional GET → 304 issues)
+app.use('/api', (req, res, next) => {
+  res.set('Cache-Control', 'no-store, private, must-revalidate')
+  res.set('Pragma', 'no-cache')
+  next()
+})
+
 // ── Rate Limiting ─────────────────────────────────────────
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,   // 15 minutes
@@ -55,7 +66,8 @@ app.use('/api/', limiter)
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 20,
+  max: process.env.NODE_ENV === 'development' ? 200 : 20,
+  skipSuccessfulRequests: true,
   message: { success: false, message: 'Too many login attempts, please try again later.' },
 })
 
@@ -92,6 +104,7 @@ app.use('/api/doctor',  doctorRoutes)
 app.use('/api/admin',   adminRoutes)
 app.use('/api/ai',      aiRoutes)
 app.use('/api/access',   accessRoutes)
+app.use('/api/notifications', notificationRoutes)
 
 // ── 404 + Error Handlers ─────────────────────────────────
 app.use(notFound)
