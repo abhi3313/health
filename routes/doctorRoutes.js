@@ -5,6 +5,7 @@ const { body } = require('express-validator')
 const {
   getDashboard, getStats,
   getPatients, getPatient, getPatientRecords, addPatientRecord,
+  getPatientReports, uploadPatientReport,
   addNote,
   getAppointments, updateAppointment,
   getPatientPrescriptions, addPrescription,
@@ -12,6 +13,7 @@ const {
 
 const { protect, authorize, requireApproved } = require('../middleware/auth')
 const validate = require('../middleware/validate')
+const upload = require('../config/multer')
 
 // All doctor routes require auth + doctor role + approval
 router.use(protect, authorize('doctor'), requireApproved)
@@ -26,6 +28,8 @@ router.get('/patients/:id',   getPatient)
 
 // Patient records (doctor view)
 router.get('/patients/:id/records', getPatientRecords)
+router.get('/patients/:id/reports', getPatientReports)
+router.post('/patients/:id/reports/upload', upload.single('report'), uploadPatientReport)
 
 const recordRules = [
   body('type').notEmpty().withMessage('Record type is required'),

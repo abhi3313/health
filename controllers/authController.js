@@ -4,6 +4,16 @@ const User     = require('../models/User')
 const AuditLog = require('../models/AuditLog')
 const { verifyAndConsumeOtp } = require('../utils/otpService')
 
+function getConfiguredGoogleClientIds() {
+  return [
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.VITE_GOOGLE_CLIENT_ID,
+    ...(process.env.GOOGLE_CLIENT_IDS || '').split(','),
+  ]
+    .map((x) => String(x || '').trim().replace(/^["']|["']$/g, ''))
+    .filter(Boolean)
+}
+
 // ── Helpers ────────────────────────────────────────────────
 const sendToken = (res, user, statusCode, message) => {
   const token     = user.generateToken()
@@ -125,6 +135,7 @@ const ALLOWED_PROFILE_KEYS = new Set([
   'name', 'phone', 'avatar', 'address',
   'dateOfBirth', 'bloodGroup', 'gender',
   'emergencyContact', 'allergies', 'chronicConditions',
+  'importantMedicalConditions', 'emergencyNotes',
   'specialization', 'licenseNumber', 'hospital', 'experience', 'qualifications', 'consultationFee',
 ])
 
@@ -183,10 +194,7 @@ const googleAuth = async (req, res) => {
   if (!idToken) {
     return res.status(400).json({ success: false, message: 'Google credential is required.' })
   }
-  const configuredClientIds = [
-    process.env.GOOGLE_CLIENT_ID,
-    ...(process.env.GOOGLE_CLIENT_IDS || '').split(',').map((x) => x.trim()).filter(Boolean),
-  ].filter(Boolean)
+  const configuredClientIds = getConfiguredGoogleClientIds()
 
   if (!configuredClientIds.length) {
     return res.status(503).json({ success: false, message: 'Google sign-in is not configured on this server.' })

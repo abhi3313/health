@@ -247,6 +247,14 @@ const bookAppointment = async (req, res) => {
   if (!doctorId || !date || !time || !reason) {
     return res.status(400).json({ success: false, message: 'Doctor, date, time and reason are required.' })
   }
+  const appointmentDate = new Date(date)
+  if (Number.isNaN(appointmentDate.getTime())) {
+    return res.status(400).json({ success: false, message: 'Valid appointment date is required.' })
+  }
+  const today = startOfLocalDay()
+  if (appointmentDate < today) {
+    return res.status(400).json({ success: false, message: 'Appointment date cannot be in the past.' })
+  }
   const doctor = await User.findOne({
       _id: doctorId,
       role: 'doctor',
@@ -258,7 +266,7 @@ const bookAppointment = async (req, res) => {
   const appointment = await Appointment.create({
     patient: req.user._id,
     doctor:  doctorId,
-    date, time, reason, type,
+    date: appointmentDate, time, reason, type,
   })
   await appointment.populate('doctor', 'name specialization')
   res.status(201).json({ success: true, message: 'Appointment booked successfully', data: { appointment } })

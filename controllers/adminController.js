@@ -4,7 +4,6 @@ const Appointment = require('../models/Appointment')
 const Report      = require('../models/Report')
 const Prescription= require('../models/Prescription')
 const AuditLog    = require('../models/AuditLog')
-const { createNotification } = require('../utils/notificationHelper')
 const bcrypt      = require('bcryptjs')
 const fs          = require('fs')
 const os          = require('os')
@@ -247,17 +246,6 @@ const approveDoctor = async (req, res) => {
     user: req.user._id,
     action: approve ? 'DOCTOR_APPROVED' : 'DOCTOR_REJECTED',
     resource: 'User', resourceId: doctor._id, ip: req.ip,
-  })
-
-  // Create notification for doctor
-  await createNotification({
-    recipientId: doctor._id,
-    senderId: req.user._id,
-    type: approve ? 'doctor_approved' : 'doctor_rejected',
-    title: approve ? 'Account Approved' : 'Account Rejected',
-    message: approve
-      ? 'Your doctor account has been approved by the admin. You can now access all features.'
-      : 'Your doctor account has been rejected by the admin.',
   })
 
   res.json({

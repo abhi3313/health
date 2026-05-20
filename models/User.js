@@ -88,6 +88,13 @@ const userSchema = new mongoose.Schema(
     },
     allergies: [{ type: String }],
     chronicConditions: [{ type: String }],
+    importantMedicalConditions: [{ type: String }],
+    emergencyNotes: {
+      type: String,
+      trim: true,
+      maxlength: [1000, 'Emergency notes cannot exceed 1000 characters'],
+      default: '',
+    },
 
     // Doctor-specific fields
     specialization: { type: String, default: '' },

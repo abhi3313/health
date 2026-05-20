@@ -19,7 +19,7 @@ const doctorRoutes      = require('./routes/doctorRoutes')
 const adminRoutes       = require('./routes/adminRoutes')
 const aiRoutes          = require('./routes/aiRoutes')
 const accessRoutes      = require('./routes/accessRoutes')
-const notificationRoutes = require('./routes/notificationRoutes')
+const emergencyRoutes   = require('./routes/emergencyRoutes')
 
 const app  = express()
 const PORT = process.env.PORT || 5000
@@ -104,7 +104,7 @@ app.use('/api/doctor',  doctorRoutes)
 app.use('/api/admin',   adminRoutes)
 app.use('/api/ai',      aiRoutes)
 app.use('/api/access',   accessRoutes)
-app.use('/api/notifications', notificationRoutes)
+app.use('/api/emergency', emergencyRoutes)
 
 // ── 404 + Error Handlers ─────────────────────────────────
 app.use(notFound)

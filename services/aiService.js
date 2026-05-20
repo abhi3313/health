@@ -1,7 +1,7 @@
 'use strict'
 
-// Default: Gemini 3.5 Flash (Google AI). Override via GEMINI_MODEL if your project uses another ID.
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash'
+// Default: Gemini 2.5 Flash (Google AI). Override via GEMINI_MODEL if your project uses another ID.
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash'
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY
 
 // ─── Knowledge Base ─────────────────────────────────────────────────────────
@@ -571,6 +571,69 @@ const FOLLOW_UP = [
   "Would you like tips on tracking this in your HealthGuardian records?",
 ]
 
+KB.push(
+  {
+    patterns: [/stomach|abdominal|nausea|vomit|diarrhea|constipation|acidity|indigestion|gastric|gas\b/i],
+    responses: [
+      `**Digestive Symptoms Guide**
+
+Common symptoms like stomach pain, nausea, acidity, vomiting, diarrhea, or constipation can happen for many reasons, including food irritation, infection, dehydration, stress, or medicine side effects.
+
+**General care tips:**
+- Drink enough fluids, especially if vomiting or diarrhea is present
+- Eat light foods for a short time, such as rice, toast, bananas, or soup
+- Avoid alcohol, very spicy foods, and heavy or oily meals
+- Rest and monitor symptoms
+
+**Seek medical care urgently if you have:**
+- Severe or worsening abdominal pain
+- Blood in vomit or stool
+- Signs of dehydration
+- High fever
+- Persistent vomiting
+- Symptoms lasting more than 1-2 days or repeatedly returning
+
+This is general information only. A clinician can help identify the cause if symptoms are significant or persistent.`,
+    ],
+  },
+  {
+    patterns: [/paracetamol|acetaminophen|ibuprofen|painkiller|pain\s*relief|body\s*pain|muscle\s*pain|joint\s*pain/i],
+    responses: [
+      `**Pain Relief & Medicine Safety**
+
+Pain relievers can help with fever, headache, body pain, or muscle pain, but they should be used carefully.
+
+**General safety points:**
+- Follow the dose on the label or your doctor's instructions
+- Avoid taking multiple medicines with the same ingredient
+- Avoid ibuprofen/NSAIDs if you have a stomach ulcer, kidney disease, blood thinner use, or certain heart conditions unless a clinician says it is safe
+- Avoid excess acetaminophen/paracetamol, especially with liver disease or alcohol use
+
+**Get medical advice urgently if pain is severe, sudden, linked with chest pain, breathing trouble, weakness, confusion, injury, high fever, or does not improve.**
+
+For personal dosing or whether it is safe with your medicines, ask a doctor or pharmacist.`,
+    ],
+  },
+  {
+    patterns: [/typhoid|enteric\s*fever|salmonella\s*typhi/i],
+    responses: [
+      `**Typhoid Fever - General Information**
+
+Typhoid fever is a bacterial infection that usually spreads through contaminated food or water. It can cause ongoing fever, weakness, stomach pain, headache, loss of appetite, diarrhea or constipation, and sometimes a rash.
+
+**What to do:**
+- Drink safe water and keep fluids up
+- Eat light, hygienic food if you can tolerate it
+- Avoid self-starting antibiotics
+- See a doctor for testing and treatment if typhoid is suspected
+
+**Get urgent medical care if there is very high fever, severe weakness, confusion, persistent vomiting, blood in stool, severe abdominal pain, dehydration, or symptoms in a child, older adult, pregnant person, or someone with low immunity.**
+
+This is educational information only. A clinician can confirm typhoid with appropriate tests and decide treatment.`,
+    ],
+  },
+)
+
 // ─── Matcher ────────────────────────────────────────────────
 function matchResponse(message) {
   const normalized = message.toLowerCase().trim()
@@ -599,6 +662,19 @@ function detectIntent(message) {
   return null
 }
 
+function isVagueContextFollowUp(message) {
+  const m = message.toLowerCase().trim()
+  const words = m.split(/\s+/).filter(Boolean)
+  if (words.length > 8) return false
+
+  return [
+    /^(tell me more|explain more|explain again|what do you mean)\??$/,
+    /^(what about it|how about it|is that serious|why is that)\??$/,
+    /^(and that|also that|same as above|the previous one)\??$/,
+    /\b(this|that|it|those|them|previous|earlier|above)\b/,
+  ].some(pattern => pattern.test(m))
+}
+
 const INTENT_RESPONSES = {
   gratitude:   "You're very welcome! 😊 Don't hesitate to ask if you have more health questions. Take care!",
   small_talk:  "I'm doing great and ready to help! 💪 What health topic can I assist you with today?",
@@ -625,19 +701,21 @@ function buildGeminiHistory(history = []) {
     }))
 }
 
-async function queryGemini(message, history = []) {
+async function queryGemini(message, history = [], options = {}) {
   if (!GEMINI_API_KEY || typeof fetch !== 'function') return null
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`
   const geminiHistory = buildGeminiHistory(history)
+  const userPrompt = options.contextPrompt || message
+  const systemInstruction = options.systemInstruction || SYSTEM_INSTRUCTION
 
   const response = await fetch(url, {
     method: 'POST',
     cache: 'no-store',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
-      contents: [...geminiHistory, { role: 'user', parts: [{ text: message }] }],
+      systemInstruction: { parts: [{ text: systemInstruction }] },
+      contents: [...geminiHistory, { role: 'user', parts: [{ text: userPrompt }] }],
       generationConfig: {
         temperature: 0.5,
         maxOutputTokens: 2048,
@@ -660,7 +738,7 @@ async function queryGemini(message, history = []) {
 }
 
 // ─── Exported AI service ────────────────────────────────────
-const processQuery = async (message, history = []) => {
+const processQuery = async (message, history = [], options = {}) => {
   if (!message || typeof message !== 'string') {
     return { reply: 'Please provide a valid health question.' }
   }
@@ -681,9 +759,9 @@ const processQuery = async (message, history = []) => {
 
   // Prefer Gemini when API key is configured
   try {
-    const geminiReply = await queryGemini(trimmed, history)
+    const geminiReply = await queryGemini(trimmed, history, options)
     if (geminiReply) {
-      return { reply: geminiReply, matched: 'gemini' }
+      return { reply: geminiReply, matched: options.contextPrompt ? 'gemini_medical_mentor' : 'gemini' }
     }
   } catch (error) {
     // Fall back to local KB to keep feature available even if provider fails
@@ -698,8 +776,8 @@ const processQuery = async (message, history = []) => {
     return { reply: matched, matched: 'kb_match' }
   }
 
-  // Context-aware follow-up from history
-  if (history.length > 0) {
+  // Context-aware follow-up only for vague references like "what about it?"
+  if (history.length > 0 && isVagueContextFollowUp(trimmed)) {
     const last = history.filter(h => h.role === 'assistant').pop()
     if (last) {
       return {

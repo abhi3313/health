@@ -8,18 +8,18 @@ const connectDB = async () => {
       serverSelectionTimeoutMS: 5000,
     })
 
-    console.log(`✅  MongoDB Connected: ${conn.connection.host}`)
+    console.log(` MongoDB Connected: ${conn.connection.host}`)
 
     mongoose.connection.on('error', (err) => {
-      console.error(`❌  MongoDB Error: ${err.message}`)
+      console.error(` MongoDB Error: ${err.message}`)
     })
 
     mongoose.connection.on('disconnected', () => {
-      console.warn('⚠️   MongoDB disconnected. Retrying...')
+      console.warn('   MongoDB disconnected. Retrying...')
     })
 
   } catch (error) {
-    console.error(`❌  MongoDB Connection Failed: ${error.message}`)
+    console.error(`  MongoDB Connection Failed: ${error.message}`)
     process.exit(1)
   }
 }

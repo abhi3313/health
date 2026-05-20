@@ -1,6 +1,7 @@
 const mongoose       = require('mongoose')
 const User           = require('../models/User')
 const HealthRecord   = require('../models/HealthRecord')
+const Report         = require('../models/Report')
 const Appointment    = require('../models/Appointment')
 const Prescription   = require('../models/Prescription')
 const Vital          = require('../models/Vital')
@@ -335,6 +336,45 @@ const getPatientRecords = async (req, res) => {
 }
 
 // ─── DOCTOR ADDS RECORD FOR PATIENT ────────────────────────
+const getPatientReports = async (req, res) => {
+  const denied = await assertDoctorCanManagePatient(req.user._id, req.params.id)
+  if (denied) return res.status(denied.code).json({ success: false, message: denied.message })
+
+  const reports = await Report.find({ patient: req.params.id, isArchived: false })
+    .sort({ createdAt: -1 })
+    .populate('doctor', 'name specialization')
+
+  res.json({ success: true, message: 'Patient reports fetched', data: { reports } })
+}
+
+const uploadPatientReport = async (req, res) => {
+  if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded.' })
+
+  const patient = await User.findOne({ _id: req.params.id, role: 'patient' })
+  if (!patient) return res.status(404).json({ success: false, message: 'Patient not found.' })
+
+  const denied = await assertDoctorCanManagePatient(req.user._id, req.params.id)
+  if (denied) return res.status(denied.code).json({ success: false, message: denied.message })
+
+  const serverUrl = `${req.protocol}://${req.get('host')}`
+  const report = await Report.create({
+    patient:      req.params.id,
+    doctor:       req.user._id,
+    filename:     req.file.filename,
+    originalName: req.file.originalname,
+    mimetype:     req.file.mimetype,
+    size:         req.file.size,
+    url:          `${serverUrl}/uploads/reports/${req.file.filename}`,
+    tag:          req.body.tag || 'Doctor Report',
+    description:  req.body.description || '',
+    category:     req.body.category || 'other',
+    sharedWith:   [req.user._id],
+  })
+
+  await report.populate('doctor', 'name specialization')
+  res.status(201).json({ success: true, message: 'Report uploaded successfully', data: { report } })
+}
+
 const addPatientRecord = async (req, res) => {
   const patient = await User.findOne({ _id: req.params.id, role: 'patient' })
   if (!patient) return res.status(404).json({ success: false, message: 'Patient not found.' })
@@ -481,6 +521,7 @@ const getStats = async (req, res) => {
 module.exports = {
   getDashboard, getStats,
   getPatients, getPatient, getPatientRecords, addPatientRecord,
+  getPatientReports, uploadPatientReport,
   addNote,
   getAppointments, updateAppointment,
   getPatientPrescriptions, addPrescription,

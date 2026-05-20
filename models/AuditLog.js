@@ -11,6 +11,7 @@ const auditLogSchema = new mongoose.Schema(
       required: true,
       enum: [
         'USER_REGISTERED', 'USER_LOGIN', 'USER_LOGOUT',
+        'USER_REGISTERED_OAUTH', 'USER_LOGIN_OAUTH',
         'DOCTOR_AWAITING_APPROVAL',
         'USER_CREATED', 'USER_UPDATED', 'USER_DELETED',
         'USER_STATUS_TOGGLED', 'DOCTOR_APPROVED', 'DOCTOR_REJECTED',
@@ -19,6 +20,7 @@ const auditLogSchema = new mongoose.Schema(
         'APPOINTMENT_CREATED', 'APPOINTMENT_UPDATED', 'APPOINTMENT_CANCELLED',
         'PRESCRIPTION_CREATED',
         'VITAL_ADDED',
+        'EMERGENCY_ACCESS',
         'AI_QUERY',
       ],
     },

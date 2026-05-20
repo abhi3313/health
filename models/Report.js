@@ -7,6 +7,11 @@ const reportSchema = new mongoose.Schema(
       ref: 'User',
       required: true,
     },
+    doctor: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
     filename: {
       type: String,
       required: true,
