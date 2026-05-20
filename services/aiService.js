@@ -640,7 +640,7 @@ async function queryGemini(message, history = []) {
       contents: [...geminiHistory, { role: 'user', parts: [{ text: message }] }],
       generationConfig: {
         temperature: 0.5,
-        maxOutputTokens: 700,
+        maxOutputTokens: 2048,
       },
     }),
   })
