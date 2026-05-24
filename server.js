@@ -23,6 +23,7 @@ const emergencyRoutes   = require('./routes/emergencyRoutes')
 
 const app  = express()
 const PORT = process.env.PORT || 5000
+const frontendDistPath = path.resolve(__dirname, '..', 'healthgurdian', 'healthguardian', 'dist')
 
 function parseAllowedOrigins() {
   const configured = [
@@ -151,6 +152,16 @@ app.use('/api/admin',   adminRoutes)
 app.use('/api/ai',      aiRoutes)
 app.use('/api/access',   accessRoutes)
 app.use('/api/emergency', emergencyRoutes)
+
+// Serve the built React app when the frontend dist folder exists.
+// This keeps direct browser routes like /login and /register working when
+// the app is opened through the backend origin, while /api routes stay API-only.
+app.use(express.static(frontendDistPath))
+app.get(/^\/(?!api\/).*/, (req, res, next) => {
+  res.sendFile(path.join(frontendDistPath, 'index.html'), (err) => {
+    if (err) next()
+  })
+})
 
 // ── 404 + Error Handlers ─────────────────────────────────
 app.use(notFound)
