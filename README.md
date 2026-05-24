@@ -98,4 +98,12 @@ ADMIN_PASSWORD=replace_with_a_strong_password
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_IDS=
 REQUIRE_REGISTER_OTP=false
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=your-gmail-address@gmail.com
+SMTP_PASS=your-16-character-google-app-password
+SMTP_FROM="HealthGuardian <your-gmail-address@gmail.com>"
 ```
+
+For Gmail OTP and password-reset emails, `SMTP_PASS` must be a Google App Password from the same account as `SMTP_USER`, not your normal Gmail password. Enable 2-Step Verification first, then generate a fresh App Password in your Google account security settings.

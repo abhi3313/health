@@ -1,11 +1,11 @@
-const AuditLog = require('../models/AuditLog')
+const { writeAuditLog } = require('../utils/audit')
 
 const auditLogger = (action, resource) => {
   return async (req, res, next) => {
     res.on('finish', async () => {
       if (res.statusCode >= 200 && res.statusCode < 300) {
         try {
-          await AuditLog.create({
+          await writeAuditLog({
             user:       req.user?._id,
             action,
             resource,

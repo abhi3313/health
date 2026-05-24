@@ -4,6 +4,8 @@ const Appointment = require('../models/Appointment')
 const Report      = require('../models/Report')
 const Prescription= require('../models/Prescription')
 const AuditLog    = require('../models/AuditLog')
+const { writeAuditLog } = require('../utils/audit')
+const { sendDoctorApprovalEmail } = require('../utils/mailer')
 const bcrypt      = require('bcryptjs')
 const fs          = require('fs')
 const os          = require('os')
@@ -153,7 +155,7 @@ const createUser = async (req, res) => {
     status: 'active',
   })
 
-  await AuditLog.create({
+  await writeAuditLog({
     user:       req.user._id,
     action:     'USER_CREATED',
     resource:   'User',
@@ -172,7 +174,7 @@ const updateUser = async (req, res) => {
   const user = await User.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true }).select('-password')
   if (!user) return res.status(404).json({ success: false, message: 'User not found.' })
 
-  await AuditLog.create({
+  await writeAuditLog({
     user: req.user._id, action: 'USER_UPDATED', resource: 'User', resourceId: user._id, ip: req.ip,
   })
 
@@ -187,7 +189,7 @@ const deleteUser = async (req, res) => {
   const user = await User.findByIdAndDelete(req.params.id)
   if (!user) return res.status(404).json({ success: false, message: 'User not found.' })
 
-  await AuditLog.create({
+  await writeAuditLog({
     user: req.user._id, action: 'USER_DELETED', resource: 'User',
     details: { deletedEmail: user.email, deletedRole: user.role }, ip: req.ip,
   })
@@ -206,7 +208,7 @@ const toggleUserStatus = async (req, res) => {
   user.status = user.status === 'active' ? 'suspended' : 'active'
   await user.save({ validateBeforeSave: false })
 
-  await AuditLog.create({
+  await writeAuditLog({
     user: req.user._id, action: 'USER_STATUS_TOGGLED', resource: 'User',
     resourceId: user._id, details: { newStatus: user.status }, ip: req.ip,
   })
@@ -238,15 +240,26 @@ const approveDoctor = async (req, res) => {
   if (!doctor) return res.status(404).json({ success: false, message: 'Doctor not found.' })
 
   const approve = req.body.approve !== false
+  const wasApproved = doctor.isApproved
   doctor.isApproved = approve
   doctor.status     = approve ? 'active' : 'inactive'
   await doctor.save({ validateBeforeSave: false })
 
-  await AuditLog.create({
+  await writeAuditLog({
     user: req.user._id,
     action: approve ? 'DOCTOR_APPROVED' : 'DOCTOR_REJECTED',
     resource: 'User', resourceId: doctor._id, ip: req.ip,
   })
+
+  if (approve && !wasApproved) {
+    try {
+      await sendDoctorApprovalEmail(doctor)
+    } catch (err) {
+      if (process.env.NODE_ENV === 'development') {
+        console.warn('Doctor approval email failed:', err.message)
+      }
+    }
+  }
 
   res.json({
     success: true,

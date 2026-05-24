@@ -24,6 +24,42 @@ const emergencyRoutes   = require('./routes/emergencyRoutes')
 const app  = express()
 const PORT = process.env.PORT || 5000
 
+function parseAllowedOrigins() {
+  const configured = [
+    process.env.FRONTEND_URL,
+    process.env.FRONTEND_URLS,
+    process.env.CLIENT_URL,
+  ]
+    .filter(Boolean)
+    .flatMap(value => String(value).split(','))
+    .map(value => value.trim().replace(/\/$/, ''))
+    .filter(Boolean)
+
+  return [
+    ...configured,
+    'http://localhost:3000',
+    'http://localhost:5173',
+    'http://localhost:4173',
+  ]
+}
+
+const allowedOrigins = parseAllowedOrigins()
+const strictCors = process.env.CORS_STRICT === 'true'
+
+function isAllowedOrigin(origin) {
+  if (!origin) return true
+  const normalized = origin.replace(/\/$/, '')
+
+  if (allowedOrigins.includes(normalized)) return true
+
+  try {
+    const { hostname, protocol } = new URL(normalized)
+    return protocol === 'https:' && hostname.endsWith('.vercel.app')
+  } catch {
+    return false
+  }
+}
+
 // Avoid 304 Not Modified on API JSON GETs (empty body breaks some clients / confuses devtools)
 app.set('etag', false)
 
@@ -31,18 +67,26 @@ app.set('etag', false)
 connectDB()
 
 // ── Security Middleware ───────────────────────────────────
-app.use(helmet())
+app.use(helmet({
+  crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
+}))
 
 // ── CORS ──────────────────────────────────────────────────
 const corsOptions = {
-  origin: [
-    process.env.FRONTEND_URL || 'http://localhost:3000',
-    'http://localhost:5173',
-    'http://localhost:4173',
-  ],
+  origin(origin, callback) {
+    if (isAllowedOrigin(origin)) return callback(null, true)
+    if (!strictCors) {
+      if (process.env.NODE_ENV === 'development') {
+        console.warn(`CORS allowing unlisted origin in non-strict mode: ${origin}`)
+      }
+      return callback(null, true)
+    }
+    return callback(null, false)
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
+  optionsSuccessStatus: 204,
 }
 app.use(cors(corsOptions))
 app.options('*', cors(corsOptions))
@@ -77,7 +121,9 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 
 // ── Logging ───────────────────────────────────────────────
 if (process.env.NODE_ENV === 'development') {
-  app.use(morgan('dev'))
+  app.use(morgan('dev', {
+    skip: (req) => /^\/api\/auth\/reset-password\//.test(req.originalUrl || req.url),
+  }))
 }
 
 // ── Static Files (Uploads) ────────────────────────────────
@@ -112,10 +158,10 @@ app.use(errorHandler)
 
 // ── Start Server ──────────────────────────────────────────
 app.listen(PORT, () => {
-  console.log(`\n🏥  HealthGuardian API`)
-  console.log(`📡  Server running on http://localhost:${PORT}`)
-  console.log(`🌿  Environment: ${process.env.NODE_ENV}`)
-  console.log(`📋  API Base URL: http://localhost:${PORT}/api\n`)
+  console.log(`\n HealthGuardian API`)
+  console.log(`  Server running on http://localhost:${PORT}`)
+  console.log(`  Environment: ${process.env.NODE_ENV}`)
+  console.log(`  API Base URL: http://localhost:${PORT}/api\n`)
 })
 
 module.exports = app

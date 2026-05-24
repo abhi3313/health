@@ -33,6 +33,11 @@ const userSchema = new mongoose.Schema(
       default: '',
       trim: true,
     },
+    authProvider: {
+      type: String,
+      enum: ['local', 'google'],
+      default: 'local',
+    },
     password: {
       type: String,
       required: [true, 'Password is required'],
@@ -109,6 +114,8 @@ const userSchema = new mongoose.Schema(
     loginCount:{ type: Number, default: 0 },
 
     passwordChangedAt: { type: Date },
+    resetPasswordToken: { type: String },
+    resetPasswordExpire: { type: Date },
     passwordResetToken: { type: String },
     passwordResetExpires: { type: Date },
   },
@@ -121,6 +128,7 @@ const userSchema = new mongoose.Schema(
 
 // ── Indexes ────────────────────────────────────────────────
 userSchema.index({ role: 1, status: 1 })
+userSchema.index({ resetPasswordToken: 1 })
 
 // ── Virtuals ───────────────────────────────────────────────
 userSchema.virtual('age').get(function () {
@@ -158,6 +166,8 @@ userSchema.methods.generateToken = function () {
 userSchema.methods.toSafeObject = function () {
   const obj = this.toObject()
   delete obj.password
+  delete obj.resetPasswordToken
+  delete obj.resetPasswordExpire
   delete obj.passwordResetToken
   delete obj.passwordResetExpires
   delete obj.__v

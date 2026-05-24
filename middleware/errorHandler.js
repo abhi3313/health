@@ -3,7 +3,7 @@ const errorHandler = (err, req, res, next) => {
   let message    = err.message    || 'Internal Server Error'
 
   if (process.env.NODE_ENV === 'development') {
-    console.error('❌ Error:', err)
+    console.error(' Error:', err)
   }
 
   // Mongoose bad ObjectId

@@ -1,8 +1,27 @@
 const crypto = require('crypto')
 const { OAuth2Client } = require('google-auth-library')
 const User     = require('../models/User')
-const AuditLog = require('../models/AuditLog')
 const { verifyAndConsumeOtp } = require('../utils/otpService')
+const { sendPasswordResetEmail } = require('../utils/mailer')
+const { writeAuditLog } = require('../utils/audit')
+
+const PASSWORD_RESET_EXPIRES_MINUTES = 15
+const FORGOT_PASSWORD_MESSAGE = 'If this email exists, reset instructions have been sent.'
+const GOOGLE_PASSWORD_RESET_MESSAGE = 'This account uses Google Sign-In. Please reset your password through your Google Account.'
+
+function getFrontendUrl() {
+  return (process.env.FRONTEND_URL || process.env.CLIENT_URL || 'http://localhost:5173')
+    .trim()
+    .replace(/\/+$/, '')
+}
+
+function hashResetToken(token) {
+  return crypto.createHash('sha256').update(token).digest('hex')
+}
+
+function isGoogleOnlyAccount(user) {
+  return user?.authProvider === 'google'
+}
 
 function getConfiguredGoogleClientIds() {
   return [
@@ -65,11 +84,12 @@ const register = async (req, res) => {
     name, email, password, role, phone,
     dateOfBirth, bloodGroup, gender,
     specialization, licenseNumber, hospital,
+    authProvider: 'local',
     isApproved: role === 'patient',
     emailVerified: !!(requireOtp || otpCode),
   })
 
-  await AuditLog.create({
+  await writeAuditLog({
     user:     user._id,
     action:   'USER_REGISTERED',
     resource: 'User',
@@ -78,7 +98,7 @@ const register = async (req, res) => {
   })
 
   if (role === 'doctor') {
-    await AuditLog.create({
+    await writeAuditLog({
       user:       user._id,
       action:     'DOCTOR_AWAITING_APPROVAL',
       resource:   'User',
@@ -113,7 +133,7 @@ const login = async (req, res) => {
   user.loginCount = (user.loginCount || 0) + 1
   await user.save({ validateBeforeSave: false })
 
-  await AuditLog.create({
+  await writeAuditLog({
     user:     user._id,
     action:   'USER_LOGIN',
     resource: 'User',
@@ -182,9 +202,84 @@ const changePassword = async (req, res) => {
   sendToken(res, user, 200, 'Password changed successfully!')
 }
 
+// POST /api/auth/forgot-password
+const forgotPassword = async (req, res) => {
+  const email = String(req.body.email || '').toLowerCase().trim()
+
+  const user = await User.findOne({ email })
+  if (!user) {
+    return res.status(200).json({ success: true, message: FORGOT_PASSWORD_MESSAGE })
+  }
+
+  if (isGoogleOnlyAccount(user)) {
+    return res.status(200).json({ success: true, message: GOOGLE_PASSWORD_RESET_MESSAGE })
+  }
+
+  const resetToken = crypto.randomBytes(32).toString('hex')
+  user.resetPasswordToken = hashResetToken(resetToken)
+  user.resetPasswordExpire = new Date(Date.now() + PASSWORD_RESET_EXPIRES_MINUTES * 60 * 1000)
+  user.passwordResetToken = undefined
+  user.passwordResetExpires = undefined
+  await user.save({ validateBeforeSave: false })
+
+  const resetUrl = `${getFrontendUrl()}/reset-password/${resetToken}`
+
+  try {
+    await sendPasswordResetEmail(user.email, resetUrl, PASSWORD_RESET_EXPIRES_MINUTES)
+  } catch (err) {
+    user.resetPasswordToken = undefined
+    user.resetPasswordExpire = undefined
+    await user.save({ validateBeforeSave: false })
+
+    if (process.env.NODE_ENV === 'development') {
+      console.error('Password reset email failed:', err.message)
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: 'Could not send reset instructions right now. Please try again later.',
+    })
+  }
+
+  return res.status(200).json({ success: true, message: FORGOT_PASSWORD_MESSAGE })
+}
+
+// PUT /api/auth/reset-password/:token
+const resetPassword = async (req, res) => {
+  const token = String(req.params.token || '').trim()
+  const { password, confirmPassword } = req.body
+
+  if (confirmPassword !== undefined && password !== confirmPassword) {
+    return res.status(400).json({ success: false, message: 'Passwords do not match.' })
+  }
+
+  const resetPasswordToken = hashResetToken(token)
+  const user = await User.findOne({
+    resetPasswordToken,
+    resetPasswordExpire: { $gt: Date.now() },
+  }).select('+password')
+
+  if (!user) {
+    return res.status(400).json({ success: false, message: 'Reset link is invalid or has expired.' })
+  }
+
+  if (isGoogleOnlyAccount(user)) {
+    return res.status(400).json({ success: false, message: GOOGLE_PASSWORD_RESET_MESSAGE })
+  }
+
+  user.password = password
+  user.resetPasswordToken = undefined
+  user.resetPasswordExpire = undefined
+  user.passwordResetToken = undefined
+  user.passwordResetExpires = undefined
+  await user.save()
+
+  return res.status(200).json({ success: true, message: 'Password reset successfully. You can now sign in.' })
+}
+
 // ── POST /api/auth/logout ──────────────────────────────────
 const logout = async (req, res) => {
-  await AuditLog.create({ user: req.user._id, action: 'USER_LOGOUT', resource: 'User', ip: req.ip })
+  await writeAuditLog({ user: req.user._id, action: 'USER_LOGOUT', resource: 'User', ip: req.ip })
   res.json({ success: true, message: 'Logged out successfully', data: null })
 }
 
@@ -227,6 +322,7 @@ const googleAuth = async (req, res) => {
       password:      crypto.randomBytes(32).toString('hex'),
       googleId:      sub,
       oauthProvider: 'google',
+      authProvider:  'google',
       role:          'patient',
       isApproved:    true,
       emailVerified: true,
@@ -235,7 +331,7 @@ const googleAuth = async (req, res) => {
       loginCount:    1,
     })
 
-    await AuditLog.create({
+    await writeAuditLog({
       user:     user._id,
       action:   'USER_REGISTERED_OAUTH',
       resource: 'User',
@@ -256,7 +352,7 @@ const googleAuth = async (req, res) => {
     user.loginCount    = (user.loginCount || 0) + 1
     await user.save({ validateBeforeSave: true })
 
-    await AuditLog.create({
+    await writeAuditLog({
       user:      user._id,
       action:    'USER_LOGIN_OAUTH',
       resource:  'User',
@@ -274,6 +370,8 @@ module.exports = {
   getMe,
   updateMe,
   changePassword,
+  forgotPassword,
+  resetPassword,
   logout,
   googleAuth,
   sendToken,

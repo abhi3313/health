@@ -1,7 +1,7 @@
 const User = require('../models/User')
-const AuditLog = require('../models/AuditLog')
 const { createAndSendOtp, verifyAndConsumeOtp } = require('../utils/otpService')
 const { sendToken } = require('./authController')
+const { writeAuditLog } = require('../utils/audit')
 
 // ── POST /api/auth/otp/send ─────────────────────────────────
 const requestOtp = async (req, res) => {
@@ -22,7 +22,15 @@ const requestOtp = async (req, res) => {
     }
   }
 
-  await createAndSendOtp(email, purpose)
+  try {
+    await createAndSendOtp(email, purpose)
+  } catch (err) {
+    if (process.env.NODE_ENV === 'development') {
+      console.error('OTP email failed:', err.message)
+    }
+    return res.status(500).json({ success: false, message: 'Could not send verification code right now. Please try again later.' })
+  }
+
   res.json({ success: true, message: 'Verification code sent to your email.' })
 }
 
@@ -48,7 +56,7 @@ const loginWithOtp = async (req, res) => {
   user.emailVerified = true
   await user.save({ validateBeforeSave: false })
 
-  await AuditLog.create({
+  await writeAuditLog({
     user:      user._id,
     action:    'USER_LOGIN_OTP',
     resource:  'User',
